@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/OWNER/sysopt/security/advisories/new
+    about: Report privately. Never open a public issue for a security problem.
+  - name: Why does sysopt refuse to do X?
+    url: https://github.com/OWNER/sysopt/blob/main/docs/DESIGN.md
+    about: Sandboxes, certificates, activation and debloating are out of scope by design.

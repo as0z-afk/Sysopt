@@ -1,0 +1,48 @@
+name: Feature or new action
+description: Propose a change — read the five rules first
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every action must satisfy five rules (see `CONTRIBUTING.md`). The
+        short version: reversible by copying back one file, plan-safe,
+        verifiable, platform-declared, and it must pass the tamper test.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should it do
+      description: One paragraph. Name the file or setting it would touch.
+    validations: { required: true }
+  - type: textarea
+    id: revert
+    attributes:
+      label: How is it reverted?
+      description: "Which single file is copied back, or which file sysopt created is deleted?"
+    validations: { required: true }
+  - type: textarea
+    id: verify
+    attributes:
+      label: How would `verify` detect tampering?
+    validations: { required: true }
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk
+      options:
+        - "none — read-only report"
+        - "low — a managed block, fully reversible"
+        - "medium — touches a system-wide file"
+        - "high — would need a reboot or a daemon restart"
+    validations: { required: true }
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Confirm
+      options:
+        - label: It does not disable a security feature, sandbox or certificate check
+          required: true
+        - label: It does not delete anything sysopt cannot restore
+          required: true
+        - label: It does not download code at runtime
+          required: true

@@ -1,0 +1,11 @@
+hosts_block	stable	1.0.0		A marked block in the system hosts file; A and AAAA for every name
+firefox_userjs	stable	1.0.0		A marked prefs block in every Firefox profile user.js
+firefox_policy	stable	1.0.0		Add-only merge into the system Firefox policies.json
+swappiness	stable	1.0.0		vm.swappiness via one /etc/sysctl.d drop-in; skipped under tlp/ppd
+report_power	stable	1.0.0		Read-only governor / EPP / power-owner report
+wu_telemetry	beta	1.1.0		Windows policy: AllowTelemetry = 0
+wu_consumer	beta	1.1.0		Windows policy: DisableWindowsConsumerFeatures = 1
+wu_delivery_lan	beta	1.1.0		Windows policy: DODownloadMode = 1
+wu_bing_search	beta	1.1.0		Windows: BingSearchEnabled = 0
+wu_tips	beta	1.1.0		Windows: SoftLandingEnabled = 0
+wu_sync_ads	beta	1.1.0		Windows: ShowSyncProviderNotifications = 0

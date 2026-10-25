@@ -1,0 +1,10 @@
+# sysopt — hostnames that must never be blocked, even if they are on the list
+#
+# Copy to your state dir as `allow.txt`:
+#   cp allow.example.txt ~/.config/sysopt/allow.txt
+#
+# The allow list wins over both the built-in list and extra-block.txt. Use it
+# when a site you need shares a hostname with an ad domain.
+
+# example: a storefront that also serves its checkout from the ad domain
+# checkout.doubleclick.net

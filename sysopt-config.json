@@ -1,0 +1,10 @@
+{
+  "Install": [],
+  "Tweaks": [
+    "WPFTweaksRestorePoint",
+    "WPFTweaksTelemetry",
+    "WPFTweaksConsumerFeatures",
+    "WPFTweaksDeliveryOptimization"
+  ],
+  "Features": []
+}

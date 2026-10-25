@@ -1,0 +1,64 @@
+name: Bug report
+description: Something did not do what the README says it does
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: run `sysopt doctor`. It answers most "my machine is in a
+        weird state" questions, and its output is what a maintainer needs first.
+
+        **Do not paste a security issue here.** Use the repository's Security →
+        Advisories → *Report a vulnerability*.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: One sentence, then the exact command you ran.
+      placeholder: |
+        `sysopt apply` wrote /etc/hosts without making a backup.
+        Command: sudo ./bin/sysopt apply --apply --yes
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Quote the README or the plan output if it promised something specific.
+    validations: { required: true }
+  - type: textarea
+    id: detects
+    attributes:
+      label: "`sysopt detect` output"
+      description: This carries the OS, arch and action matrix. Please do not trim it.
+      render: text
+    validations: { required: true }
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`sysopt doctor` and `sysopt status` output"
+      render: text
+    validations: { required: false }
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux (systemd)
+        - Linux (non-systemd: Alpine, Void, …)
+        - ChromeOS / Crostini
+        - macOS
+        - BSD (FreeBSD, OpenBSD, NetBSD, DragonFly)
+        - Windows (PowerShell 5.1)
+        - Windows (PowerShell 7)
+        - Termux / Android
+        - other (say which in the description)
+    validations: { required: true }
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I have run `sysopt doctor` and included its output above
+          required: true
+        - label: This report contains no secrets, keys or personal data
+          required: true

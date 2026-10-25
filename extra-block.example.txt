@@ -1,0 +1,17 @@
+# sysopt — optional extra hostnames to block
+#
+# Copy this file to your state dir as `extra-block.txt`:
+#   cp extra-block.example.txt ~/.config/sysopt/extra-block.txt
+#
+# One bare hostname per line. No scheme, no path, no wildcards — sysopt blocks
+# exact names only, and it writes both the A and the AAAA record.
+#
+# Lines starting with # are ignored.
+
+# telemetry
+telemetry.mozilla.org
+incoming.telemetry.mozilla.org
+
+# ad exchanges you personally keep seeing
+adform.net
+smartadserver.com

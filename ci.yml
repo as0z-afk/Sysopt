@@ -1,0 +1,219 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: sh / ${{ matrix.os }} / ${{ matrix.shell }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            shell: dash
+          - os: ubuntu-latest
+            shell: bash
+          - os: ubuntu-latest
+            shell: busybox
+          - os: macos-latest
+            shell: sh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every script with ${{ matrix.shell }}
+        run: |
+          set -eu
+          if [ "${{ matrix.shell }}" = "busybox" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq busybox
+            busybox sh -n lib/sysopt.sh
+            busybox sh -n bin/sysopt
+            busybox sh -n tests/run_tests.sh
+            busybox sh -n install.sh
+          else
+            if ! command -v "${{ matrix.shell }}" >/dev/null 2>&1; then
+              echo "::error::${{ matrix.shell }} is not installed on this runner"
+              exit 1
+            fi
+            "${{ matrix.shell }}" -n lib/sysopt.sh
+            "${{ matrix.shell }}" -n bin/sysopt
+            "${{ matrix.shell }}" -n tests/run_tests.sh
+            "${{ matrix.shell }}" -n install.sh
+          fi
+
+      - name: Run the test suite under ${{ matrix.shell }}
+        run: |
+          set -eu
+          if [ "${{ matrix.shell }}" = "busybox" ]; then
+            busybox sh tests/run_tests.sh
+          else
+            "${{ matrix.shell }}" tests/run_tests.sh
+          fi
+
+      - name: Installer round-trip
+        run: |
+          set -eu
+          P=$(mktemp -d)
+          sh install.sh --prefix "$P"
+          "$P/bin/sysopt" detect >/dev/null
+          "$P/bin/sysopt" list >/dev/null
+          sh install.sh --prefix "$P" --uninstall
+          test ! -d "$P/share/sysopt"
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: Lint
+        run: shellcheck -s sh -S warning bin/sysopt lib/sysopt.sh tests/run_tests.sh install.sh
+      - name: No runtime downloads anywhere
+        run: |
+          set -eu
+          # the whole promise is that nothing is fetched at runtime
+          if grep -rnE '(^|[^a-z])(curl|wget|iex|Invoke-Expression|DownloadString)([^a-z]|$)' \
+               bin lib install.sh; then
+            echo "::error::a runtime download path was found"
+            exit 1
+          fi
+          echo "no runtime download path found"
+
+  windows:
+    name: powershell / windows-latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse the PowerShell port
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'bin/sysopt.ps1'), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
+          Write-Host "bin/sysopt.ps1 parses cleanly"
+
+      - name: Read-only commands
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\bin\sysopt.ps1 detect
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\bin\sysopt.ps1 list
+          .\bin\sysopt.ps1 plan
+          .\bin\sysopt.ps1 status
+          .\bin\sysopt.ps1 doctor
+
+      - name: Plan must not write
+        shell: pwsh
+        run: |
+          $state = Join-Path $env:RUNNER_TEMP 'sysopt-state'
+          $env:SYSOPT_STATE = $state
+          .\bin\sysopt.ps1 plan | Out-Null
+          if (Test-Path (Join-Path $state 'manifest.tsv')) {
+            Write-Host '::error::plan wrote a manifest'
+            exit 1
+          }
+          Write-Host 'plan wrote nothing'
+
+      - name: Test suite (staged root, nothing outside RUNNER_TEMP)
+        shell: pwsh
+        run: |
+          pwsh -NoLogo -NoProfile -File tests/run_tests.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  powershell-linux:
+    name: powershell / ubuntu (portability)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The port must refuse, not pretend, when it is not staged
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $state = Join-Path $env:RUNNER_TEMP 'sysopt-state'
+          $env:SYSOPT_STATE = $state
+          $env:SYSOPT_ROOT  = ''
+          .\bin\sysopt.ps1 detect | Out-Null
+          .\bin\sysopt.ps1 list | Out-Null
+          .\bin\sysopt.ps1 plan | Out-Null
+          .\bin\sysopt.ps1 verify | Out-Null
+          if (Test-Path (Join-Path $state 'manifest.tsv')) {
+            Write-Host '::error::a read-only command wrote state'
+            exit 1
+          }
+          Write-Host 'the port reports not-supported and writes nothing'
+
+      - name: Test suite against a staged root
+        shell: pwsh
+        run: |
+          pwsh -NoLogo -NoProfile -File tests/run_tests.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  windows-registry:
+    name: windows tweak round-trip
+    runs-on: windows-latest
+    # a disposable VM, which is exactly what makes this test possible: apply,
+    # verify, revert, and then assert the registry is back where it started
+    steps:
+      - uses: actions/checkout@v4
+      - name: Before
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+          $v = (Get-ItemProperty -Path $k -Name AllowTelemetry -ErrorAction SilentlyContinue).AllowTelemetry
+          "before AllowTelemetry=[$v]" | Tee-Object -FilePath "$env:RUNNER_TEMP\before.txt"
+      - name: Apply, verify, revert
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:SYSOPT_STATE = Join-Path $env:RUNNER_TEMP 'sysopt-state'
+          .\bin\sysopt.ps1 apply -Only wu_telemetry,wu_tips -Apply
+          if ($LASTEXITCODE -ne 0) { Write-Host '::error::apply failed'; exit 1 }
+          .\bin\sysopt.ps1 verify -Only wu_telemetry,wu_tips
+          .\bin\sysopt.ps1 revert -All -Apply
+          if ($LASTEXITCODE -ne 0) { Write-Host '::error::revert failed'; exit 1 }
+      - name: After
+        shell: pwsh
+        run: |
+          $k = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+          $v = (Get-ItemProperty -Path $k -Name AllowTelemetry -ErrorAction SilentlyContinue).AllowTelemetry
+          $before = Get-Content "$env:RUNNER_TEMP\before.txt"
+          $after  = "after AllowTelemetry=[$v]"
+          Write-Host $after
+          if ($before.Replace('before','') -ne $after.Replace('after','')) {
+            Write-Host '::error::the registry did not return to its previous state'
+            exit 1
+          }
+          Write-Host 'registry restored byte for byte'
+
+  # a single job that branch protection can require
+  ci:
+    name: ci
+    needs: [shell, shellcheck, windows, powershell-linux, windows-registry]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Fail unless every job passed
+        run: |
+          if [ "${{ needs.shell.result }}" != "success" ] \
+          || [ "${{ needs.shellcheck.result }}" != "success" ] \
+          || [ "${{ needs.windows.result }}" != "success" ] \
+          || [ "${{ needs.powershell-linux.result }}" != "success" ] \
+          || [ "${{ needs.windows-registry.result }}" != "success" ]; then
+            echo "a required job did not pass"
+            exit 1
+          fi
+          echo "all good"

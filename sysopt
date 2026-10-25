@@ -1,0 +1,187 @@
+#!/bin/sh
+# =============================================================================
+#  sysopt — entry point. Sources the portable core and dispatches.
+#
+#  This file is deliberately tiny so that `sh -n bin/sysopt` plus a checksum of
+#  lib/sysopt.sh is enough to audit a release.
+# =============================================================================
+set -u
+
+# follow a symlink chain so $PREFIX/bin/sysopt finds share/sysopt/lib
+_self=$0
+while [ -L "$_self" ]; do
+  _t=$(readlink -- "$_self" 2>/dev/null) || break
+  case "$_t" in
+    /*) _self=$_t ;;
+    *)  _self=$(dirname -- "$_self")/$_t ;;
+  esac
+done
+_here=$(CDPATH='' cd -- "$(dirname -- "$_self")" && pwd) || exit 1
+
+_lib=""
+for _c in "$_here/../lib/sysopt.sh" "$_here/lib/sysopt.sh" \
+          "$_here/../share/sysopt/lib/sysopt.sh" \
+          "$_here/../libexec/sysopt/sysopt.sh"; do
+  if [ -r "$_c" ]; then _lib=$_c; break; fi
+done
+if [ -z "$_lib" ]; then
+  printf '[x] cannot find lib/sysopt.sh next to %s\n' "$0" >&2
+  printf '    looked in: %s/../lib, %s/lib, %s/../share/sysopt/lib\n' "$_here" "$_here" "$_here" >&2
+  exit 1
+fi
+# the tree this launcher belongs to; update swaps files inside it
+SYSOPT_HOME=$(CDPATH='' cd -- "$(dirname -- "$_lib")/.." && pwd) || SYSOPT_HOME=''
+export SYSOPT_HOME SYSOPT_CATALOG
+if [ -z "${SYSOPT_CATALOG:-}" ] && [ -n "$SYSOPT_HOME" ] && [ -f "$SYSOPT_HOME/contrib/catalog/actions.tsv" ]; then
+  SYSOPT_CATALOG="$SYSOPT_HOME/contrib/catalog/actions.tsv"
+fi
+
+# shellcheck source=../lib/sysopt.sh
+. "$_lib"
+
+CMD=""
+ONLY=""
+DRY_RUN=1
+EXPLICIT_DRY=0
+APPLY_FLAG=0
+ASSUME_YES=0
+FORCE_CPU=0
+QUIET=0
+SYSOPT_ROOT=""
+REVERT_ID=""
+REVERT_ALL=0
+UPD_FROM=""
+UPD_NOTEST=0
+UPD_FULLTEST=0
+UPD_ROLLBACK=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --apply)      APPLY_FLAG=1 ;;
+    --dry-run)    EXPLICIT_DRY=1 ;;
+    --only)       ONLY="${2:-}"; [ -n "$ONLY" ] || { usage >&2; exit $EX_USAGE; }; shift ;;
+    --only=*)     ONLY="${1#--only=}" ;;
+    --force-cpu)  FORCE_CPU=1 ;;
+    --yes|-y)     ASSUME_YES=1 ;;
+    --quiet|-q)   QUIET=1 ;;
+    --id)         REVERT_ID="${2:-}"; [ -n "$REVERT_ID" ] || { usage >&2; exit $EX_USAGE; }; shift ;;
+    --id=*)       REVERT_ID="${1#--id=}" ;;
+    --all)        REVERT_ALL=1 ;;
+    --state)      SYSOPT_STATE="${2:-}"; [ -n "$SYSOPT_STATE" ] || { usage >&2; exit $EX_USAGE; }; shift ;;
+    --state=*)    SYSOPT_STATE="${1#--state=}" ;;
+    --root)       SYSOPT_ROOT="${2:-}"; [ -n "$SYSOPT_ROOT" ] || { usage >&2; exit $EX_USAGE; }; shift ;;
+    --root=*)     SYSOPT_ROOT="${1#--root=}" ;;
+    -h|--help)    usage; exit $EX_OK ;;
+    -*)
+      if [ "$CMD" = "update" ]; then
+        case "$1" in
+          --from)      UPD_FROM="${2:-}"; [ -n "$UPD_FROM" ] || { usage >&2; exit $EX_USAGE; }; shift ;;
+          --from=*)    UPD_FROM="${1#--from=}" ;;
+          --no-test)   UPD_NOTEST=1 ;;
+          --full-test) UPD_FULLTEST=1 ;;
+          --rollback)  UPD_ROLLBACK=1 ;;
+          *)           err "update: unknown option: $1"; exit $EX_USAGE ;;
+        esac
+      else
+        err "unknown option: $1"; exit $EX_USAGE
+      fi
+      ;;
+    *)            if [ -z "$CMD" ]; then CMD="$1"; else err "unexpected argument: $1"; exit $EX_USAGE; fi ;;
+  esac
+  shift
+done
+
+# consent, once, for every command: --apply means "write", --dry-run always wins
+if [ "$EXPLICIT_DRY" = 1 ]; then
+  DRY_RUN=1
+elif [ "$APPLY_FLAG" = 1 ]; then
+  DRY_RUN=0
+fi
+
+FILTER=$(printf '%s' "$ONLY" | tr ',' ' ')
+
+export DRY_RUN ASSUME_YES FORCE_CPU QUIET SYSOPT_ROOT
+
+reset_state_paths
+detect_os
+detect_arch
+
+# an unknown action id is a usage error, not a silent no-op
+if [ -n "$FILTER" ]; then
+  for _f in $FILTER; do
+    if ! action_ids | grep -qx -- "$_f"; then
+      err "unknown action: $_f (see: $SYSOPT_NAME list)"
+      exit $EX_USAGE
+    fi
+  done
+fi
+
+# --only filters the action list for plan/apply/verify. The filter is kept in
+# FILTER as a space separated list and expanded by _dispatch; that expansion is
+# deliberate, so the disable for SC2086 lives on one line instead of five.
+_dispatch() {
+  _d_cmd=$1; shift
+  # shellcheck disable=SC2086
+  "$_d_cmd" "$@" $FILTER
+}
+
+case "${CMD:-}" in
+  ""|-h|--help) usage; exit $EX_OK ;;
+  detect)  cmd_detect ;;
+  list)    cmd_list ;;
+  version) cmd_version ;;
+  status)  cmd_status ;;
+  doctor)  cmd_doctor ;;
+  plan)    _dispatch cmd_plan ;;
+  apply)
+    # `apply` is the whole workflow: plan, confirm, write, verify.
+    # Consent comes from a typed "y", from --apply, or from --yes. --dry-run wins.
+    if [ "$EXPLICIT_DRY" = 1 ]; then
+      warn "--dry-run given: showing the plan only; nothing will be written"
+      _dispatch cmd_plan
+      exit $EX_OK
+    fi
+    if [ "$ASSUME_YES" != 1 ] && [ "$APPLY_FLAG" != 1 ]; then
+      hdr "plan"
+      _dispatch cmd_plan
+      printf '\nApply these changes? [y/N] '
+      _ans=""
+      read -r _ans 2>/dev/null || _ans=""
+      case "$_ans" in
+        y|Y|yes|YES) : ;;
+        *) err "cancelled; nothing written"; exit $EX_CANCELLED ;;
+      esac
+    fi
+    DRY_RUN=0
+    export DRY_RUN
+    _dispatch run_phase apply
+    _rc=$?
+    hdr "verification"
+    _dispatch run_phase verify | print_rows
+    hdr "next"
+    say "  status : $SYSOPT_NAME status"
+    say "  revert : $SYSOPT_NAME revert --all --apply"
+    exit $_rc
+    ;;
+  verify)  _dispatch cmd_verify ;;
+  catalog) cmd_catalog ;;
+  update)
+    SYSOPT_UPD_FROM="$UPD_FROM"
+    SYSOPT_UPD_NOTEST="$UPD_NOTEST"
+    SYSOPT_UPD_FULLTEST="$UPD_FULLTEST"
+    SYSOPT_UPD_ROLLBACK="$UPD_ROLLBACK"
+    export SYSOPT_UPD_FROM SYSOPT_UPD_NOTEST SYSOPT_UPD_FULLTEST SYSOPT_UPD_ROLLBACK
+    cmd_update
+    ;;
+  revert)
+    if [ "$REVERT_ALL" = 1 ]; then
+      cmd_revert --all
+    elif [ -n "$REVERT_ID" ]; then
+      cmd_revert --id "$REVERT_ID"
+    else
+      err "usage: $SYSOPT_NAME revert --id <id> | revert --all"; exit $EX_USAGE
+    fi
+    ;;
+  *)       err "unknown command: $CMD"; usage >&2; exit $EX_USAGE ;;
+esac
+exit $?
