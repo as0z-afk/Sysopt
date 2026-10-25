@@ -1,0 +1,9 @@
+# sysopt never writes inside the repo, but keep the obvious noise out
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+tmp/
+out/
+*.log
